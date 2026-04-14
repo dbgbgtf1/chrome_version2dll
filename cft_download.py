@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 import argparse
 import json
-import subprocess
 import sys
 import zipfile
 from pathlib import Path
 
+from download import (
+    DEFAULT_BINARY_DIR,
+    DEFAULT_PROXY,
+    DEFAULT_TIMEOUT,
+    DownloadTarget,
+    download_targets,
+    prompt_for_download,
+)
 
-DEFAULT_HISTORY_FILE = "cache_history_versions"
+
+DEFAULT_HISTORY_FILE = "cache_stable_history_versions"
 DEFAULT_DOWNLOADS_FILE = "cft_version_with_downloads.json"
-DEFAULT_BINARY_DIR = "binary"
-DEFAULT_PROXY = "127.0.0.1:10808"
-DEFAULT_TIMEOUT = 30.0
 
 
 def parse_args():
@@ -77,13 +82,6 @@ def build_url_map(downloads_data):
     return url_map
 
 
-def normalize_proxy(proxy):
-    proxy = proxy.strip()
-    if "://" not in proxy:
-        proxy = "http://" + proxy
-    return proxy
-
-
 def verify_zip_file(output_path):
     try:
         with zipfile.ZipFile(output_path) as zip_file:
@@ -93,53 +91,6 @@ def verify_zip_file(output_path):
 
     if bad_file:
         raise RuntimeError(f"zip integrity check failed at {bad_file}")
-
-
-def run_curl(url, output_path, timeout, proxy=None):
-    command = [
-        "curl",
-        "--output",
-        str(output_path),
-    ]
-
-    if proxy:
-        command.extend(["--proxy", normalize_proxy(proxy)])
-
-    command.append(url)
-
-    print(command)
-    result = subprocess.run(command)
-    if result.returncode != 0:
-        raise RuntimeError(f"curl exited with code {result.returncode}")
-
-
-def download_files(version_urls, binary_dir, proxy, timeout):
-    binary_path = Path(binary_dir)
-    binary_path.mkdir(parents=True, exist_ok=True)
-
-    for version, url in version_urls:
-        output_path = binary_path / f"{version}-chrome-win64.zip"
-        print(f"Downloading {version} -> {output_path}")
-
-        try:
-            run_curl(url, output_path, timeout)
-            verify_zip_file(output_path)
-            print(f"Finished {version} via direct")
-            continue
-        except Exception as exc:
-            if output_path.exists():
-                output_path.unlink()
-            normalized_proxy = normalize_proxy(proxy)
-            print(f"Direct download failed for {version}: {exc}. Retrying via proxy {normalized_proxy}.")
-
-        try:
-            run_curl(url, output_path, timeout, proxy=proxy)
-            verify_zip_file(output_path)
-            print(f"Finished {version} via proxy")
-        except Exception as exc:
-            if output_path.exists():
-                output_path.unlink()
-            raise RuntimeError(f"failed to download {version} via proxy: {exc}") from exc
 
 
 def main():
@@ -162,32 +113,34 @@ def main():
     target_versions = collect_target_versions(history_data, start_major, end_major)
     url_map = build_url_map(downloads_data)
 
-    version_urls = []
+    targets = []
+    binary_path = Path(args.binary_dir)
     for version in target_versions:
         url = url_map.get(version)
         if url:
-            version_urls.append((version, url))
+            targets.append(
+                DownloadTarget(
+                    label=version,
+                    url=url,
+                    output_path=binary_path / f"{version}-chrome-win64.zip",
+                )
+            )
 
-    if not version_urls:
+    if not targets:
         print("No download urls found.")
         return 0
 
-    for _, url in version_urls:
-        print(url)
-
-    answer = input(f"Download {len(version_urls)} files to {args.binary_dir}? [y/N] ")
-    answer = answer.strip().lstrip("\ufeff").lower()
-    if answer not in ("y", "yes"):
+    if not prompt_for_download(targets, args.binary_dir):
         print("Canceled.")
         return 0
 
     try:
-        download_files(version_urls, args.binary_dir, args.proxy, args.timeout)
+        download_targets(targets, args.proxy, args.timeout, verify_zip_file)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
-    print(f"Downloaded {len(version_urls)} files to {args.binary_dir}")
+    print(f"Downloaded {len(targets)} files to {args.binary_dir}")
     return 0
 
 
