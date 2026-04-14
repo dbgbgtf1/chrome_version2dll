@@ -7,19 +7,32 @@ from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
 
 
-DEFAULT_URL = (
+URL_TEMPLATE = (
     "https://versionhistory.googleapis.com/v1/chrome/"
-    "platforms/win64/channels/stable/versions?pageSize=1000"
+    "platforms/{platform}/channels/{channel}/versions?pageSize=1000"
 )
 DEFAULT_OUTPUT = "cache_history_versions"
 DEFAULT_PROXY = "http://127.0.0.1:10808"
+CHANNELS = ("stable", "extended", "beta", "canary", "dev")
+PLATFORMS = ("win64", "win", "arm64")
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Fetch Chrome stable win64 version history into a local cache file."
     )
-    parser.add_argument("--url", default=DEFAULT_URL, help="Version history API URL")
+    parser.add_argument(
+        "--channel",
+        default="stable",
+        choices=CHANNELS,
+        help="Chrome channel",
+    )
+    parser.add_argument(
+        "--platform",
+        default="win64",
+        choices=PLATFORMS,
+        help="Chrome platform",
+    )
     parser.add_argument(
         "--output",
         default=DEFAULT_OUTPUT,
@@ -32,6 +45,10 @@ def parse_args():
     )
     parser.add_argument("--timeout", type=float, default=30.0, help="Request timeout in seconds")
     return parser.parse_args()
+
+
+def build_url(platform, channel):
+    return URL_TEMPLATE.format(platform=platform, channel=channel)
 
 
 def normalize_proxy(proxy):
@@ -84,9 +101,10 @@ def write_cache(output, text):
 
 def main():
     args = parse_args()
+    url = build_url(args.platform, args.channel)
 
     try:
-        response_text = fetch_text(args.url, args.timeout)
+        response_text = fetch_text(url, args.timeout)
         network_mode = "direct"
     except RuntimeError as direct_error:
         print(
@@ -94,7 +112,7 @@ def main():
             file=sys.stderr,
         )
         try:
-            response_text = fetch_text(args.url, args.timeout, proxy=args.proxy)
+            response_text = fetch_text(url, args.timeout, proxy=args.proxy)
             network_mode = f"proxy {normalize_proxy(args.proxy)}"
         except RuntimeError as proxy_error:
             print(f"Proxy request failed: {proxy_error}", file=sys.stderr)
@@ -107,7 +125,7 @@ def main():
         return 1
 
     output_path = write_cache(args.output, response_text)
-    print(f"Saved {args.url} to {output_path} via {network_mode}.")
+    print(f"Saved {url} to {output_path} via {network_mode}.")
     return 0
 
 
