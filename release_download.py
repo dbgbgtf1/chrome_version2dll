@@ -23,6 +23,9 @@ ARCH_MACHINES = {
     "arm64": 0xAA64,
 }
 
+DEFAULT_CFT_BINARY_DIR = str(Path(DEFAULT_BINARY_DIR) / "cft")
+DEFAULT_DLL_BINARY_DIR = str(Path(DEFAULT_BINARY_DIR) / "dll")
+
 
 def read_pe_metadata(file_obj):
     file_obj.seek(0x3C)
@@ -87,17 +90,27 @@ def verify_pe_file(output_path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--arch", choices=ARCH_MACHINES, default="x64")
-    parser.add_argument("--binary-dir", default=DEFAULT_BINARY_DIR)
+    parser.add_argument(
+        "--zip-dir",
+        default=DEFAULT_CFT_BINARY_DIR,
+        help="Directory containing Chrome for Testing zip files",
+    )
+    parser.add_argument(
+        "--binary-dir",
+        default=DEFAULT_DLL_BINARY_DIR,
+        help="Directory to write extracted chrome.dll files",
+    )
     parser.add_argument("--proxy", default=DEFAULT_PROXY)
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     args = parser.parse_args()
 
     binary_dir = Path(args.binary_dir)
+    zip_dir = Path(args.zip_dir)
     machine = ARCH_MACHINES[args.arch]
     targets = []
 
     try:
-        for zip_path in sorted(binary_dir.glob("*.zip")):
+        for zip_path in sorted(zip_dir.glob("*.zip")):
             with zipfile.ZipFile(zip_path) as zf:
                 dll_name = next(
                     name for name in zf.namelist() if name.lower().endswith("chrome.dll")

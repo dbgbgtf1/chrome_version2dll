@@ -4,6 +4,8 @@ import json
 import sys
 import zipfile
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 from download import (
     DEFAULT_BINARY_DIR,
@@ -11,28 +13,28 @@ from download import (
     DEFAULT_TIMEOUT,
     DownloadTarget,
     download_targets,
+    normalize_proxy,
     prompt_for_download,
 )
 
 
 DEFAULT_HISTORY_FILE = "cache_stable_history_versions"
-DEFAULT_DOWNLOADS_FILE = "cft_version_with_downloads.json"
+DEFAULT_CFT_BINARY_DIR = str(Path(DEFAULT_BINARY_DIR) / "cft")
+URL_TEMPLATE = (
+    "https://storage.googleapis.com/chrome-for-testing-public/"
+    "{version}/win64/chrome-win64.zip"
+)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Extract win64 Chrome download URLs for a Chrome version range."
+        description="Probe and download win64 Chrome for Testing zips for a Chrome version range."
     )
     parser.add_argument("version_range", help="Chrome major version range, for example: 120-121")
     parser.add_argument("--history", default=DEFAULT_HISTORY_FILE, help="History cache file")
-    parser.add_argument(
-        "--downloads",
-        default=DEFAULT_DOWNLOADS_FILE,
-        help="Chrome for Testing downloads JSON file",
-    )
-    parser.add_argument("--binary-dir", default=DEFAULT_BINARY_DIR, help="Download directory")
-    parser.add_argument("--proxy", default=DEFAULT_PROXY, help="Fallback HTTP/HTTPS proxy")
-    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="Download timeout in seconds")
+    parser.add_argument("--binary-dir", default=DEFAULT_CFT_BINARY_DIR, help="Download directory")
+    parser.add_argument("--proxy", default=DEFAULT_PROXY, help="HTTP/HTTPS proxy")
+    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="Probe and download timeout in seconds")
     return parser.parse_args()
 
 
@@ -68,18 +70,60 @@ def collect_target_versions(history_data, start_major, end_major):
     return versions
 
 
-def build_url_map(downloads_data):
-    url_map = {}
-    for item in downloads_data.get("versions", []):
-        version = item.get("version")
-        if not version:
-            continue
+def build_download_url(version):
+    return URL_TEMPLATE.format(version=version)
 
-        for download in item.get("downloads", {}).get("chrome", []):
-            if download.get("platform") == "win64" and download.get("url"):
-                url_map[version] = download["url"]
-                break
-    return url_map
+
+def _open_request(request, timeout, proxy=None):
+    if proxy:
+        normalized_proxy = normalize_proxy(proxy)
+        opener = build_opener(
+            ProxyHandler(
+                {
+                    "http": normalized_proxy,
+                    "https": normalized_proxy,
+                }
+            )
+        )
+        return opener.open(request, timeout=timeout)
+
+    return urlopen(request, timeout=timeout)
+
+
+def probe_url(url, timeout, proxy=None):
+    request = Request(
+        url,
+        headers={
+            "Range": "bytes=0-0",
+            "User-Agent": "cft_download.py",
+        },
+    )
+
+    try:
+        with _open_request(request, timeout, proxy=proxy) as response:
+            return response.status in (200, 206)
+    except HTTPError as exc:
+        if exc.code in (403, 404):
+            return False
+        raise RuntimeError(f"HTTP {exc.code}") from exc
+    except URLError as exc:
+        raise RuntimeError(str(exc.reason)) from exc
+    except TimeoutError as exc:
+        raise RuntimeError("request timed out") from exc
+
+
+def probe_url_with_proxy_fallback(url, proxy, timeout):
+    if proxy:
+        try:
+            return probe_url(url, timeout, proxy=proxy)
+        except RuntimeError as proxy_error:
+            print(
+                f"Proxy probe failed for {url}: {proxy_error}. "
+                "Retrying direct."
+            )
+            return probe_url(url, timeout)
+
+    return probe_url(url, timeout)
 
 
 def verify_zip_file(output_path):
@@ -99,7 +143,6 @@ def main():
     try:
         start_major, end_major = parse_version_range(args.version_range)
         history_data = load_json(args.history)
-        downloads_data = load_json(args.downloads)
     except FileNotFoundError as exc:
         print(f"file not found: {exc.filename}", file=sys.stderr)
         return 1
@@ -111,13 +154,19 @@ def main():
         return 1
 
     target_versions = collect_target_versions(history_data, start_major, end_major)
-    url_map = build_url_map(downloads_data)
 
     targets = []
+    skipped_versions = []
     binary_path = Path(args.binary_dir)
     for version in target_versions:
-        url = url_map.get(version)
-        if url:
+        url = build_download_url(version)
+        try:
+            available = probe_url_with_proxy_fallback(url, args.proxy, args.timeout)
+        except RuntimeError as exc:
+            print(f"failed to probe {version}: {exc}", file=sys.stderr)
+            return 1
+
+        if available:
             targets.append(
                 DownloadTarget(
                     label=version,
@@ -125,6 +174,8 @@ def main():
                     output_path=binary_path / f"{version}-chrome-win64.zip",
                 )
             )
+        else:
+            skipped_versions.append(version)
 
     if not targets:
         print("No download urls found.")
@@ -140,6 +191,8 @@ def main():
         print(str(exc), file=sys.stderr)
         return 1
 
+    if skipped_versions:
+        print(f"Skipped {len(skipped_versions)} unavailable versions.")
     print(f"Downloaded {len(targets)} files to {args.binary_dir}")
     return 0
 

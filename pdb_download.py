@@ -18,6 +18,8 @@ from download import (
 
 SYMSRV_BASE_URL = "https://chromium-browser-symsrv.commondatastorage.googleapis.com"
 DEFAULT_PDB_TIMEOUT = 600.0
+DEFAULT_DLL_BINARY_DIR = str(Path(DEFAULT_BINARY_DIR) / "dll")
+DEFAULT_PDB_BINARY_DIR = str(Path(DEFAULT_BINARY_DIR) / "pdb")
 
 
 def parse_args():
@@ -28,9 +30,18 @@ def parse_args():
         "dll_paths",
         nargs="*",
         type=Path,
-        help="Optional chrome.dll paths. Defaults to binary/*chrome.dll",
+        help="Optional chrome.dll paths. Defaults to binary/dll/*chrome.dll",
     )
-    parser.add_argument("--binary-dir", default=DEFAULT_BINARY_DIR)
+    parser.add_argument(
+        "--dll-dir",
+        default=DEFAULT_DLL_BINARY_DIR,
+        help="Directory containing chrome.dll files when dll_paths are omitted",
+    )
+    parser.add_argument(
+        "--binary-dir",
+        default=DEFAULT_PDB_BINARY_DIR,
+        help="Directory to write downloaded PDB files",
+    )
     parser.add_argument("--proxy", default=DEFAULT_PROXY)
     parser.add_argument("--timeout", type=float, default=DEFAULT_PDB_TIMEOUT)
     parser.add_argument(
@@ -203,10 +214,10 @@ def verify_pdb_file(output_path):
 
 def main():
     args = parse_args()
-    dll_paths = args.dll_paths or iter_default_dll_paths(args.binary_dir)
+    dll_paths = args.dll_paths or iter_default_dll_paths(args.dll_dir)
 
     if not dll_paths:
-        print(f"no files matched: {args.binary_dir}\\*chrome.dll", file=sys.stderr)
+        print(f"no files matched: {args.dll_dir}\\*chrome.dll", file=sys.stderr)
         return 1
 
     binary_dir = Path(args.binary_dir)

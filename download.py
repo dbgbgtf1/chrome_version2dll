@@ -10,7 +10,7 @@ from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 
 DEFAULT_BINARY_DIR = "binary"
-DEFAULT_PROXY = "127.0.0.1:10808"
+DEFAULT_PROXY = None
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_GZIP_RANGE_WORKERS = 8
 DEFAULT_GZIP_RANGE_CHUNK_SIZE = 16 * 1024 * 1024
@@ -44,10 +44,13 @@ def read_url(url, timeout, proxy=None, size=None):
 
 
 def read_url_with_proxy_fallback(url, proxy, timeout, size=None):
-    try:
-        return read_url(url, timeout, size=size)
-    except Exception:
-        return read_url(url, timeout, proxy=proxy, size=size)
+    if proxy:
+        try:
+            return read_url(url, timeout, proxy=proxy, size=size)
+        except Exception:
+            return read_url(url, timeout, size=size)
+
+    return read_url(url, timeout, size=size)
 
 
 def prompt_for_download(targets, binary_dir):
@@ -294,6 +297,27 @@ def run_gzip_range_download(
             shutil.rmtree(part_dir)
 
 
+def _download_target(
+    target,
+    timeout,
+    proxy,
+    gzip_range,
+    gzip_range_workers,
+    gzip_range_chunk_size,
+):
+    if gzip_range:
+        run_gzip_range_download(
+            target.url,
+            target.output_path,
+            timeout,
+            proxy=proxy,
+            workers=gzip_range_workers,
+            chunk_size=gzip_range_chunk_size,
+        )
+    else:
+        run_curl(target.url, target.output_path, timeout, proxy=proxy)
+
+
 def download_targets(
     targets,
     proxy,
@@ -307,46 +331,37 @@ def download_targets(
         target.output_path.parent.mkdir(parents=True, exist_ok=True)
         print(f"Downloading {target.label} -> {target.output_path}")
 
-        try:
-            if gzip_range:
-                run_gzip_range_download(
-                    target.url,
-                    target.output_path,
-                    timeout,
-                    workers=gzip_range_workers,
-                    chunk_size=gzip_range_chunk_size,
-                )
-            else:
-                run_curl(target.url, target.output_path, timeout)
-            verifier(target.output_path)
-            print(f"Finished {target.output_path.name} via direct")
-            continue
-        except Exception as exc:
-            if target.output_path.exists():
-                target.output_path.unlink()
-            normalized_proxy = normalize_proxy(proxy)
-            print(
-                f"Direct download failed for {target.label}: {exc}. "
-                f"Retrying via proxy {normalized_proxy}."
-            )
+        attempts = [("direct", None)]
+        if proxy:
+            attempts = [("proxy", proxy), ("direct", None)]
 
-        try:
-            if gzip_range:
-                run_gzip_range_download(
-                    target.url,
-                    target.output_path,
+        for index, (mode, attempt_proxy) in enumerate(attempts):
+            try:
+                _download_target(
+                    target,
                     timeout,
-                    proxy=proxy,
-                    workers=gzip_range_workers,
-                    chunk_size=gzip_range_chunk_size,
+                    attempt_proxy,
+                    gzip_range,
+                    gzip_range_workers,
+                    gzip_range_chunk_size,
                 )
-            else:
-                run_curl(target.url, target.output_path, timeout, proxy=proxy)
-            verifier(target.output_path)
-            print(f"Finished {target.output_path.name} via proxy")
-        except Exception as exc:
-            if target.output_path.exists():
-                target.output_path.unlink()
-            raise RuntimeError(
-                f"failed to download {target.label} via proxy: {exc}"
-            ) from exc
+                verifier(target.output_path)
+                print(f"Finished {target.output_path.name} via {mode}")
+                break
+            except Exception as exc:
+                if target.output_path.exists():
+                    target.output_path.unlink()
+
+                if index + 1 >= len(attempts):
+                    raise RuntimeError(
+                        f"failed to download {target.label} via {mode}: {exc}"
+                    ) from exc
+
+                next_mode, next_proxy = attempts[index + 1]
+                next_description = next_mode
+                if next_proxy:
+                    next_description = f"proxy {normalize_proxy(next_proxy)}"
+                print(
+                    f"{mode.capitalize()} download failed for {target.label}: {exc}. "
+                    f"Retrying via {next_description}."
+                )
