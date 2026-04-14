@@ -14,6 +14,6 @@
 - 从chrome.dll中提取GUID+AGE作为pdb的索引, 如果你不需要pdb, 可以略过这一步.
 - 使用./pdb_download.py, 默认会用并行gzip-range模式下载服务端压缩流, 然后本地解压为pdb. 运行后你应该能在bianry下看到{version}-chrome.dll-pdb
 
-注1: 仓库里的cft_version_with_downloads.json是作者此时从`https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json`拉取的, 如果需要更新版本支持, 可以手动去更新
-注2: 我只做了对chrome.dll和chrome.dll.pdb的拉取, 理论上可以拉取symserver支持的其他二进制文件和pdb. 同时我也只会完整测试stable win64是否可用
+注1: 仓库里的cft_version_with_downloads.json是作者此时从`https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json`拉取的, 如果需要更新版本支持, 可以手动去更新  
+注2: 我只做了对chrome.dll和chrome.dll.pdb的拉取, 理论上可以拉取symserver支持的其他二进制文件和pdb. 同时我也只会完整测试stable win64是否可用  
 注3: 这只是一个临时用ai搓的小工具, 提供思路参考, 只保证此时可以用, 不保证未来稳定可用
