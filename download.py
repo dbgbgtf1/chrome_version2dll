@@ -11,6 +11,7 @@ from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 DEFAULT_BINARY_DIR = "binary"
 DEFAULT_PROXY = None
+FALLBACK_PROXY = "127.0.0.1:10808"
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_GZIP_RANGE_WORKERS = 8
 DEFAULT_GZIP_RANGE_CHUNK_SIZE = 16 * 1024 * 1024
@@ -30,27 +31,51 @@ def normalize_proxy(proxy):
     return proxy
 
 
-def read_url(url, timeout, proxy=None, size=None):
+def build_network_attempts(proxy=None):
+    if proxy:
+        return [("proxy", proxy), ("direct", None)]
+    if FALLBACK_PROXY:
+        return [("direct", None), ("fallback proxy", FALLBACK_PROXY)]
+    return [("direct", None)]
+
+
+def describe_network_attempt(mode, proxy=None):
+    if proxy:
+        return f"{mode} {normalize_proxy(proxy)}"
+    return mode
+
+
+def read_url(url, timeout, proxy=None, size=None, headers=None):
+    request = Request(url, headers=headers or {}) if headers else url
     if proxy:
         normalized_proxy = normalize_proxy(proxy)
         opener = build_opener(
             ProxyHandler({"http": normalized_proxy, "https": normalized_proxy})
         )
-        with opener.open(url, timeout=timeout) as response:
+        with opener.open(request, timeout=timeout) as response:
             return response.read(size)
 
-    with urlopen(url, timeout=timeout) as response:
+    with urlopen(request, timeout=timeout) as response:
         return response.read(size)
 
 
-def read_url_with_proxy_fallback(url, proxy, timeout, size=None):
-    if proxy:
-        try:
-            return read_url(url, timeout, proxy=proxy, size=size)
-        except Exception:
-            return read_url(url, timeout, size=size)
+def read_url_with_proxy_fallback(url, proxy, timeout, size=None, headers=None):
+    attempts = build_network_attempts(proxy)
 
-    return read_url(url, timeout, size=size)
+    for index, (_mode, attempt_proxy) in enumerate(attempts):
+        try:
+            return read_url(
+                url,
+                timeout,
+                proxy=attempt_proxy,
+                size=size,
+                headers=headers,
+            )
+        except Exception:
+            if index + 1 >= len(attempts):
+                raise
+
+            continue
 
 
 def prompt_for_download(targets, binary_dir):
@@ -331,9 +356,7 @@ def download_targets(
         target.output_path.parent.mkdir(parents=True, exist_ok=True)
         print(f"Downloading {target.label} -> {target.output_path}")
 
-        attempts = [("direct", None)]
-        if proxy:
-            attempts = [("proxy", proxy), ("direct", None)]
+        attempts = build_network_attempts(proxy)
 
         for index, (mode, attempt_proxy) in enumerate(attempts):
             try:
@@ -358,9 +381,7 @@ def download_targets(
                     ) from exc
 
                 next_mode, next_proxy = attempts[index + 1]
-                next_description = next_mode
-                if next_proxy:
-                    next_description = f"proxy {normalize_proxy(next_proxy)}"
+                next_description = describe_network_attempt(next_mode, next_proxy)
                 print(
                     f"{mode.capitalize()} download failed for {target.label}: {exc}. "
                     f"Retrying via {next_description}."
