@@ -4,13 +4,13 @@ import json
 import sys
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.request import ProxyHandler, Request, build_opener
+
+from download import DEFAULT_PROXY, DEFAULT_TIMEOUT, read_url_with_proxy_fallback
 
 
 URL_TEMPLATE = (
     "https://versionhistory.googleapis.com/v1/chrome/platforms/{platform}/channels/{channel}/versions?pageSize=1000"
 )
-DEFAULT_PROXY = "http://127.0.0.1:10808"
 CHANNELS = ("stable", "extended", "beta", "canary", "dev")
 PLATFORM_TYPES = {
     "webview": "WEBVIEW",
@@ -60,12 +60,8 @@ def parse_args():
         default=None,
         help="Output file path relative to the current directory",
     )
-    parser.add_argument(
-        "--proxy",
-        default=DEFAULT_PROXY,
-        help="Fallback HTTP/HTTPS proxy used when direct network access fails",
-    )
-    parser.add_argument("--timeout", type=float, default=30.0, help="Request timeout in seconds")
+    parser.add_argument("--proxy", default=DEFAULT_PROXY, help="HTTP/HTTPS proxy")
+    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="Request timeout in seconds")
     return parser.parse_args()
 
 
@@ -84,39 +80,15 @@ def build_url(platform, channel):
     return URL_TEMPLATE.format(platform=platform, channel=channel)
 
 
-def normalize_proxy(proxy):
-    proxy = proxy.strip()
-    if "://" not in proxy:
-        proxy = "http://" + proxy
-    return proxy
-
-
 def fetch_text(url, timeout, proxy=None):
-    handlers = []
-    if proxy:
-        normalized_proxy = normalize_proxy(proxy)
-        handlers.append(
-            ProxyHandler(
-                {
-                    "http": normalized_proxy,
-                    "https": normalized_proxy,
-                }
-            )
-        )
-
-    opener = build_opener(*handlers)
-    request = Request(
-        url,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "get_history_versions.py",
-        },
-    )
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "get_history_versions.py",
+    }
 
     try:
-        with opener.open(request, timeout=timeout) as response:
-            charset = response.headers.get_content_charset() or "utf-8"
-            return response.read().decode(charset)
+        data = read_url_with_proxy_fallback(url, proxy, timeout, headers=headers)
+        return data.decode("utf-8")
     except HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"HTTP {exc.code}: {body}") from exc
@@ -144,19 +116,10 @@ def main():
     output = resolve_output_path(args.channel, args.output)
 
     try:
-        response_text = fetch_text(url, args.timeout)
-        network_mode = "direct"
-    except RuntimeError as direct_error:
-        print(
-            f"Direct request failed: {direct_error}. Retrying with proxy {args.proxy}.",
-            file=sys.stderr,
-        )
-        try:
-            response_text = fetch_text(url, args.timeout, proxy=args.proxy)
-            network_mode = f"proxy {normalize_proxy(args.proxy)}"
-        except RuntimeError as proxy_error:
-            print(f"Proxy request failed: {proxy_error}", file=sys.stderr)
-            return 1
+        response_text = fetch_text(url, args.timeout, proxy=args.proxy)
+    except RuntimeError as exc:
+        print(f"Request failed: {exc}", file=sys.stderr)
+        return 1
 
     try:
         json.loads(response_text)
@@ -165,7 +128,7 @@ def main():
         return 1
 
     output_path = write_cache(output, response_text)
-    print(f"Saved {url} to {output_path} via {network_mode}.")
+    print(f"Saved {url} to {output_path}.")
     return 0
 
 
