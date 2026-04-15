@@ -10,8 +10,8 @@ from download import (
     DEFAULT_GZIP_RANGE_CHUNK_SIZE,
     DEFAULT_GZIP_RANGE_WORKERS,
     DEFAULT_PROXY,
-    DownloadTarget,
     download_targets,
+    init_download_target,
     prompt_for_download,
 )
 
@@ -228,7 +228,7 @@ def main():
             version = extract_version(dll_path)
             url = build_pdb_url(dll_path)
             targets.append(
-                DownloadTarget(
+                init_download_target(
                     label=version,
                     url=url,
                     output_path=binary_dir / f"{version}-chrome.dll.pdb",

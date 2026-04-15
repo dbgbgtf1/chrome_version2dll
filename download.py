@@ -18,10 +18,14 @@ DEFAULT_GZIP_RANGE_CHUNK_SIZE = 16 * 1024 * 1024
 
 
 @dataclass(frozen=True)
-class DownloadTarget:
+class init_download_target:
     label: str
     url: str
     output_path: Path
+
+    def __post_init__(self):
+        print(f"url: {self.url}")
+        print(f"output_path: {self.output_path}")
 
 
 def normalize_proxy(proxy):
@@ -79,9 +83,6 @@ def read_url_with_proxy_fallback(url, proxy, timeout, size=None, headers=None):
 
 
 def prompt_for_download(targets, binary_dir):
-    for target in targets:
-        print(target.url)
-
     answer = input(f"Download {len(targets)} files to {binary_dir}? [y/N] ")
     answer = answer.strip().lstrip("\ufeff").lower()
     return answer in ("y", "yes")
@@ -354,7 +355,7 @@ def download_targets(
 ):
     for target in targets:
         target.output_path.parent.mkdir(parents=True, exist_ok=True)
-        print(f"Downloading {target.label} -> {target.output_path}")
+        print(f"Downloading {target.label}")
 
         attempts = build_network_attempts(proxy)
 
