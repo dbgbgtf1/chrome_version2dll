@@ -3,6 +3,7 @@ import argparse
 import datetime
 import heapq
 import json
+import os
 import struct
 import sys
 import urllib.parse
@@ -28,7 +29,6 @@ ARCH_MACHINES = {
     "arm64": 0xAA64,
 }
 DEFAULT_DLL_BINARY_DIR = str(Path(DEFAULT_BINARY_DIR) / "dll")
-GITHUB_TOKEN = "***REMOVED_GITHUB_TOKEN***"
 GITHUB_API_BASE_URL = "https://api.github.com/repos/chromium/chromium"
 GITHUB_RAW_BASE_URL = "https://raw.githubusercontent.com/chromium/chromium"
 SYMSRV_PREFIX_URL = "https://chromium-browser-symsrv.commondatastorage.googleapis.com/?prefix=chrome.dll"
@@ -112,12 +112,21 @@ def parse_json(data):
     return json.loads(data.decode("utf-8"))
 
 
+def get_github_token():
+    token = os.environ.get("github_token") or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        return None
+    token = token.strip()
+    return token or None
+
+
 def build_github_api_headers():
-    if not GITHUB_TOKEN:
+    token = get_github_token()
+    if not token:
         return None
 
     return {
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Authorization": f"Bearer {token}",
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
@@ -261,6 +270,19 @@ def compute_timestamp_for_commit(commit_sha, proxy, timeout, commit_cache, versi
     }
 
 
+def compute_timestamp_for_commit_with_patch(
+    commit_sha, patch, proxy, timeout, commit_cache, version_cache
+):
+    version_fields = read_cached_version_fields(commit_sha, proxy, timeout, version_cache)
+    _lastchange_depth, lastchange_timestamp = resolve_lastchange_timestamp(
+        commit_sha, proxy, timeout, commit_cache
+    )
+    return {
+        "base_tag": build_version_tag(version_fields),
+        "timestamp": lastchange_timestamp + patch,
+    }
+
+
 def build_dll_url(timestamp):
     return f"{SYMSRV_PREFIX_URL}/{timestamp:X}"
 
@@ -303,19 +325,30 @@ def resolve_symbol_url(list_url, machine, proxy, timeout):
 
 def find_existing_url_for_tag(tag, proxy, timeout, commit_cache, version_cache):
     requested_sha = read_tag_commit_sha(tag, proxy, timeout)
+    requested_version_fields = read_cached_version_fields(
+        requested_sha, proxy, timeout, version_cache
+    )
+    requested_patch = int(requested_version_fields["PATCH"])
+    requested_version_tag = build_version_tag(requested_version_fields)
     current_sha = requested_sha
 
     while True:
-        timestamp_info = compute_timestamp_for_commit(
-            current_sha, proxy, timeout, commit_cache, version_cache
+        timestamp_info = compute_timestamp_for_commit_with_patch(
+            current_sha,
+            requested_patch,
+            proxy,
+            timeout,
+            commit_cache,
+            version_cache,
         )
         url = build_dll_url(timestamp_info["timestamp"])
         if url_exists(url, proxy, timeout):
             return {
                 "requested_tag": tag,
                 "requested_sha": requested_sha,
-                "resolved_tag": timestamp_info["resolved_tag"],
+                "resolved_tag": requested_version_tag,
                 "resolved_sha": current_sha,
+                "base_tag": timestamp_info["base_tag"],
                 "timestamp": timestamp_info["timestamp"],
                 "list_url": url,
             }
