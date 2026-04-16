@@ -11,7 +11,6 @@ from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 DEFAULT_BINARY_DIR = "binary"
 DEFAULT_PROXY = None
-FALLBACK_PROXY = "127.0.0.1:10808"
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_GZIP_RANGE_WORKERS = 8
 DEFAULT_GZIP_RANGE_CHUNK_SIZE = 16 * 1024 * 1024
@@ -37,9 +36,7 @@ def normalize_proxy(proxy):
 
 def build_network_attempts(proxy=None):
     if proxy:
-        return [("proxy", proxy), ("direct", None)]
-    if FALLBACK_PROXY:
-        return [("direct", None), ("fallback proxy", FALLBACK_PROXY)]
+        return [("proxy", proxy)]
     return [("direct", None)]
 
 
