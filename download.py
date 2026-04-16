@@ -93,6 +93,8 @@ def run_curl(url, output_path, timeout, proxy=None):
         "curl",
         "--location",
         "--compressed",
+        "--retry",
+        "3",
         "--max-time",
         str(timeout),
         "--output",
